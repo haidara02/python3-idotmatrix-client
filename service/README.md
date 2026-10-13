@@ -12,9 +12,17 @@ The board shows the line and current time, minutes until the next train (large),
 
 It holds a Bluetooth connection open, which is how it notices a power cut straight away. The display only takes one connection at a time, so **stop the service before using the phone app** (`docker compose stop`).
 
-## Setup on a Raspberry Pi
+## Where to run it
 
-The Pi needs to be within Bluetooth range of the display (roughly one room). Any Pi with built-in Bluetooth works (3B+, 4, Zero 2 W).
+Anywhere with Bluetooth that's within range of the display (roughly one room):
+
+- **A Raspberry Pi** with built-in Bluetooth (3B+, 4, Zero 2 W).
+- **A Proxmox VM** with a USB Bluetooth dongle passed through (Hardware → Add → USB Device, then shut the VM down and start it again). Install `bluez` in the VM and check `bluetoothctl show`.
+  **Not an LXC**: the kernel only allows Bluetooth sockets in the host's network namespace, so the dongle can't be used from inside a container.
+
+## Setup
+
+The steps below are for a Pi, but any Debian-based machine with Docker (including an OpenMediaVault VM) works the same way from step 2.
 
 1. Install Raspberry Pi OS Lite (64-bit) and Docker:
 
@@ -61,6 +69,8 @@ To try a layout without the display, `docker compose run --rm -v $PWD:/out idotm
 
 ## Troubleshooting
 
+- **Screen stays dark although the logs say `sent clock`**: usually the display's own sleep schedule from the phone app, which blanks the screen whatever is sent. The service now turns it off on every connect, so use `SLEEP` instead. If it ever comes back, turn the schedule off in the app.
+- **Nothing happens at all**: `docker compose stop`, then `docker compose run --rm idotmatrix test` shows red and green using the two Bluetooth write types and logs the display's replies (`05 00 .. .. 01` means the command was accepted). Set `WRITE_WITH_RESPONSE` to whichever one worked.
 - **`display not reachable` forever**: the phone app is probably connected. Force-close it. Also check the Pi is close enough.
 - **D-Bus permission errors**: on hosts with AppArmor (Ubuntu), add `security_opt: [apparmor:unconfined]` to the compose service.
 - **Board says `NO DATA`**: the API hasn't answered for 5 minutes. `docker compose logs` shows why (a wrong key gives a 401).

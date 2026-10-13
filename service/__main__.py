@@ -6,11 +6,13 @@ automatic recovery when the display loses power.
     python -m service stops NAME   look up TfNSW stop IDs
     python -m service departures   print departures for the configured stop
     python -m service preview OUT  render the train board to a PNG
+    python -m service test         flash test colours to find which write type the display accepts
 """
 
 import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
+import signal
 import sys
 from typing import List, Optional
 from zoneinfo import ZoneInfo
@@ -42,7 +44,7 @@ class Service:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.tz = ZoneInfo(cfg.timezone)
-        self.display = Display(cfg.address)
+        self.display = Display(cfg.address, cfg.write_with_response)
         # what the display is showing right now; None forces everything to be re-sent
         self.shown: Optional[str] = None
         self.last_png: Optional[bytes] = None
@@ -62,6 +64,7 @@ class Service:
                     await self.display.sync_time(datetime.now(self.tz))
                     self.last_time_sync = datetime.now(timezone.utc)
                     await self.display.set_brightness(self.cfg.brightness)
+                    await self.display.disable_builtin_schedule()
                     backoff = 5
                 except Exception as error:
                     logger.info(f"display not reachable ({error}), retrying in {backoff}s")
@@ -107,6 +110,8 @@ class Service:
                 await self.display.show_clock(
                     self.cfg.clock_style, self.cfg.clock_color, self.cfg.clock_24h, self.cfg.clock_date
                 )
+                # send the time again now the clock is up, in case the first one was dropped
+                await self.display.sync_time(datetime.now(self.tz))
                 self.shown = "clock"
             return
 
@@ -146,6 +151,44 @@ class Service:
             logger.warning(f"could not fetch departures: {error}")
 
 
+async def serve(cfg: Config) -> None:
+    service = Service(cfg)
+    task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, task.cancel)
+    try:
+        await service.run()
+    except asyncio.CancelledError:
+        logger.info("shutting down")
+    finally:
+        # otherwise BlueZ keeps the display connected after we exit
+        await service.display.disconnect()
+
+
+async def test_display(cfg: Config) -> None:
+    display = Display(cfg.address)
+    await display.connect()
+    for gatt_service in display.conn.client.services:
+        print(f"service {gatt_service.uuid}")
+        for char in gatt_service.characteristics:
+            print(f"    {char.uuid}  {', '.join(char.properties)}")
+    for label, with_response, color in (
+        ("RED    = write without response", False, (255, 0, 0)),
+        ("GREEN  = write with response", True, (0, 255, 0)),
+    ):
+        print(f"\nnow showing {label}")
+        display.with_response = with_response
+        try:
+            await display.screen(True)
+            await display.fill(*color)
+        except Exception as error:
+            print(f"    failed: {error}")
+        await asyncio.sleep(5)
+    await display.disconnect()
+    print("\nwhich colours appeared?")
+
+
 def _require_key(cfg: Config) -> None:
     if not cfg.tfnsw_api_key:
         sys.exit("TFNSW_API_KEY is not set")
@@ -162,7 +205,9 @@ def main(argv: List[str]) -> None:
     if command == "run":
         if not cfg.tfnsw_api_key:
             logger.warning("TFNSW_API_KEY is not set, train board disabled")
-        asyncio.run(Service(cfg).run())
+        asyncio.run(serve(cfg))
+    elif command == "test":
+        asyncio.run(test_display(cfg))
     elif command == "scan":
         print("\n".join(asyncio.run(ConnectionManager.scan())) or "no displays found")
     elif command == "stops":

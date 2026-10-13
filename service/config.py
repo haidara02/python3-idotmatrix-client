@@ -53,6 +53,7 @@ def _bool(value: str) -> bool:
 @dataclass
 class Config:
     address: str
+    write_with_response: bool
     timezone: str
     brightness: int
     sleep: Optional[Tuple[time, time]]
@@ -75,6 +76,7 @@ class Config:
         env = os.environ.get
         return cls(
             address=env("IDM_ADDRESS", "auto"),
+            write_with_response=_bool(env("WRITE_WITH_RESPONSE", "true")),
             timezone=env("TZ", "Australia/Sydney"),
             brightness=int(env("BRIGHTNESS", "60")),
             sleep=parse_window(env("SLEEP", "22:30-06:30")),
