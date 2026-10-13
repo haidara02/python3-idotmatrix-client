@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import time
 import os
-from typing import Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
@@ -41,6 +41,16 @@ def parse_days(value: str) -> Set[int]:
     return days
 
 
+def parse_brightness_schedule(value: str) -> List[Tuple[time, int]]:
+    """Parses "06:30=60,19:00=30,21:00=10" into (time, percent) pairs, sorted by time."""
+    schedule = []
+    for part in value.split(","):
+        if part.strip():
+            at, percent = part.split("=")
+            schedule.append((_parse_time(at), int(percent)))
+    return sorted(schedule)
+
+
 def parse_color(value: str) -> Tuple[int, int, int]:
     r, g, b = (int(c) for c in value.split("-"))
     return r, g, b
@@ -56,6 +66,8 @@ class Config:
     write_with_response: bool
     timezone: str
     brightness: int
+    brightness_schedule: List[Tuple[time, int]]
+    panel_size: int
     sleep: Optional[Tuple[time, time]]
     clock_style: int
     clock_color: Tuple[int, int, int]
@@ -79,6 +91,8 @@ class Config:
             write_with_response=_bool(env("WRITE_WITH_RESPONSE", "true")),
             timezone=env("TZ", "Australia/Sydney"),
             brightness=int(env("BRIGHTNESS", "60")),
+            brightness_schedule=parse_brightness_schedule(env("BRIGHTNESS_SCHEDULE", "")),
+            panel_size=int(env("PANEL_SIZE", "32")),
             sleep=parse_window(env("SLEEP", "22:30-06:30")),
             clock_style=int(env("CLOCK_STYLE", "0")),
             clock_color=parse_color(env("CLOCK_COLOR", "255-255-255")),
@@ -94,6 +108,18 @@ class Config:
             train_days=parse_days(env("TRAIN_DAYS", "mon-fri")),
             train_refresh=int(env("TRAIN_REFRESH", "60")),
         )
+
+
+def brightness_at(cfg: "Config", now: time) -> int:
+    """The latest scheduled brightness at or before now, carrying over from the previous
+    day before the first entry. Falls back to BRIGHTNESS without a schedule."""
+    if not cfg.brightness_schedule:
+        return cfg.brightness
+    current = cfg.brightness_schedule[-1][1]
+    for at, percent in cfg.brightness_schedule:
+        if at <= now:
+            current = percent
+    return current
 
 
 def in_window(window: Optional[Tuple[time, time]], now: time) -> bool:

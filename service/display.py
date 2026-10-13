@@ -134,3 +134,4 @@ class Display:
         # build the payload with the library but send it ourselves so errors surface
         await self.conn.send(data=Image()._createPayloads(bytearray(png)))
         self._check("image")
+        logger.info(f"sent image ({len(png)} bytes)")

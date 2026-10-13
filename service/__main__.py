@@ -19,9 +19,9 @@ from zoneinfo import ZoneInfo
 
 from idotmatrix import ConnectionManager
 
-from .config import Config, in_window
+from .config import Config, brightness_at, in_window
 from .display import Display
-from .render import render_board, to_png
+from .render import render_board, render_compact, test_pattern, to_png
 from .trains import Departure, fetch_departures, find_stops
 
 TICK_SECONDS = 10
@@ -30,6 +30,12 @@ TIME_RESYNC = timedelta(hours=6)
 STALE_AFTER = timedelta(minutes=5)
 
 logger = logging.getLogger("service")
+
+
+def render_frame(cfg: Config, now: datetime, departures: Optional[List[Departure]]):
+    if cfg.panel_size == 16:
+        return render_compact(now, departures, cfg.line_color, cfg.walk_minutes, cfg.clock_24h)
+    return render_board(now, departures, cfg.line, cfg.line_color, cfg.walk_minutes, cfg.clock_24h)
 
 
 def wanted_mode(cfg: Config, now: datetime) -> str:
@@ -48,6 +54,7 @@ class Service:
         # what the display is showing right now; None forces everything to be re-sent
         self.shown: Optional[str] = None
         self.last_png: Optional[bytes] = None
+        self.brightness: Optional[int] = None
         self.last_time_sync = datetime.min.replace(tzinfo=timezone.utc)
         self.departures: List[Departure] = []
         self.fetched_at: Optional[datetime] = None
@@ -63,7 +70,7 @@ class Service:
                     self.shown = None
                     await self.display.sync_time(datetime.now(self.tz))
                     self.last_time_sync = datetime.now(timezone.utc)
-                    await self.display.set_brightness(self.cfg.brightness)
+                    self.brightness = None
                     await self.display.disable_builtin_schedule()
                     backoff = 5
                 except Exception as error:
@@ -94,6 +101,11 @@ class Service:
             await self.display.sync_time(now)
             self.last_time_sync = datetime.now(timezone.utc)
 
+        brightness = brightness_at(self.cfg, now.time())
+        if brightness != self.brightness:
+            await self.display.set_brightness(brightness)
+            self.brightness = brightness
+
         if mode == "off":
             if self.shown != "off":
                 logger.info("screen off")
@@ -117,16 +129,7 @@ class Service:
 
         await self.refresh_departures()
         fresh = self.fetched_at and datetime.now(timezone.utc) - self.fetched_at < STALE_AFTER
-        png = to_png(
-            render_board(
-                now,
-                self.departures if fresh else None,
-                self.cfg.line,
-                self.cfg.line_color,
-                self.cfg.walk_minutes,
-                self.cfg.clock_24h,
-            )
-        )
+        png = to_png(render_frame(self.cfg, now, self.departures if fresh else None), self.cfg.panel_size)
         if self.shown != "trains":
             logger.info("showing train board")
             await self.display.enter_image_mode()
@@ -167,8 +170,9 @@ async def serve(cfg: Config) -> None:
 
 
 async def test_display(cfg: Config) -> None:
-    display = Display(cfg.address)
+    display = Display(cfg.address, cfg.write_with_response)
     await display.connect()
+    await display.disable_builtin_schedule()
     for gatt_service in display.conn.client.services:
         print(f"service {gatt_service.uuid}")
         for char in gatt_service.characteristics:
@@ -185,8 +189,16 @@ async def test_display(cfg: Config) -> None:
         except Exception as error:
             print(f"    failed: {error}")
         await asyncio.sleep(5)
+    for size in (16, 32, 64):
+        print(f"\nnow showing a {size}x{size} test image: red border, white X, green '{size}'")
+        try:
+            await display.enter_image_mode()
+            await display.show_png(to_png(test_pattern(size), size))
+        except Exception as error:
+            print(f"    failed: {error}")
+        await asyncio.sleep(8)
     await display.disconnect()
-    print("\nwhich colours appeared?")
+    print("\nwhich colours and test images appeared?")
 
 
 def _require_key(cfg: Config) -> None:
@@ -231,7 +243,7 @@ def main(argv: List[str]) -> None:
                 Departure(now + timedelta(minutes=m, seconds=30), now + timedelta(minutes=m + late, seconds=30), "T8", "Central", "Platform 1")
                 for m, late in ((6, 2), (14, 0), (21, 0))
             ]
-        img = render_board(now, departures, cfg.line, cfg.line_color, cfg.walk_minutes, cfg.clock_24h)
+        img = render_frame(cfg, now, departures)
         img.resize((320, 320), 0).save(out)
         print(f"wrote {out}")
     else:
