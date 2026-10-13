@@ -99,7 +99,7 @@ class Config:
             clock_24h=_bool(env("CLOCK_24H", "false")),
             clock_date=_bool(env("CLOCK_DATE", "true")),
             tfnsw_api_key=env("TFNSW_API_KEY", ""),
-            stop_id=env("STOP_ID", "10111010"),
+            stop_id=env("STOP_ID", ""),
             platform=env("PLATFORM", "Platform 1"),
             line=env("LINE", "T8"),
             line_color=parse_color(env("LINE_COLOR", "0-149-76")),

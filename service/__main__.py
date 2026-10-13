@@ -47,7 +47,7 @@ def render_frame(
 def wanted_mode(cfg: Config, now: datetime) -> str:
     if in_window(cfg.sleep, now.time()):
         return "off"
-    if cfg.tfnsw_api_key and now.weekday() in cfg.train_days and in_window(cfg.train_window, now.time()):
+    if cfg.tfnsw_api_key and cfg.stop_id and now.weekday() in cfg.train_days and in_window(cfg.train_window, now.time()):
         return "trains"
     return "clock"
 
@@ -244,8 +244,8 @@ def main(argv: List[str]) -> None:
     command = argv[0] if argv else "run"
 
     if command == "run":
-        if not cfg.tfnsw_api_key:
-            logger.warning("TFNSW_API_KEY is not set, train board disabled")
+        if not (cfg.tfnsw_api_key and cfg.stop_id):
+            logger.warning("TFNSW_API_KEY or STOP_ID is not set, train board disabled")
         asyncio.run(serve(cfg))
     elif command == "test":
         asyncio.run(test_display(cfg))
@@ -253,7 +253,9 @@ def main(argv: List[str]) -> None:
         print("\n".join(asyncio.run(ConnectionManager.scan())) or "no displays found")
     elif command == "stops":
         _require_key(cfg)
-        for location in find_stops(cfg.tfnsw_api_key, " ".join(argv[1:]) or "Central Station"):
+        if len(argv) < 2:
+            sys.exit('usage: python -m service stops "<station name>"')
+        for location in find_stops(cfg.tfnsw_api_key, " ".join(argv[1:])):
             print(f"{location.get('id'):>12}  {location.get('name')}")
     elif command == "departures":
         _require_key(cfg)

@@ -62,7 +62,7 @@ The steps below are for a Pi, but any Debian-based machine with Docker (includin
 4. Get a free API key at <https://opendata.transport.nsw.gov.au>: sign up, create an application and add the **Trip Planner APIs**. Put the key in `TFNSW_API_KEY`, then check the stop and platform:
 
    ```sh
-   docker compose run --rm idotmatrix stops "Central Station"
+   docker compose run --rm idotmatrix stops "Central Station"   # your station; put its ID in STOP_ID
    docker compose run --rm idotmatrix departures
    ```
 
