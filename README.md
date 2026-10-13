@@ -34,6 +34,7 @@
 * [Usage](#usage)
 * [Gif Compilations](#gif-compilations)
 * [GUI](#gui)
+* [Display Service](#display-service)
 * [Troubleshooting](#troubleshooting)
 * [Roadmap](#roadmap)
 * [Contributing](#contributing)
@@ -450,6 +451,10 @@ You can run the GUI uncompiled with python, or you can build an executible with 
 *Found a GUI bug? Submitting a new GUI request? Tag [@TheBigWazz](https://github.com/thebigwazz)*
 
 </br>
+
+## Display Service
+
+An always-on Docker service (e.g. on a Raspberry Pi) that keeps the display showing a clock, restores it automatically after power cuts, turns the screen off during sleep hours, and shows live Sydney train departures in the morning. See [service/README.md](service/README.md).
 
 ## Troubleshooting
 

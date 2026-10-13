@@ -1,0 +1,10 @@
+services:
+  idotmatrix:
+    build: .
+    container_name: idotmatrix
+    restart: unless-stopped
+    env_file: .env
+    # bleak talks to the host's bluetoothd over D-Bus
+    network_mode: host
+    volumes:
+      - /run/dbus:/run/dbus:ro
