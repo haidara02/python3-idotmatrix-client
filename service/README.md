@@ -6,9 +6,25 @@ An always-on service for one display:
 - **Sleep hours**: the screen turns off and on on a schedule.
 - **Morning train board**: live departures from Transport for NSW (the same data TripView uses) during a time window, then back to the clock.
 
+### 16x16 board
+
+![16x16 train board states](../images/trainboard16.png)
+
+- **Big number**: minutes until the next train you can catch. Turns amber in the last 3 minutes before you need to leave. An hour or more away, it shows the departure time instead.
+- **Divider**: one lit dot per minute until you need to leave, so it shrinks as the train gets closer. A grey dot marks the following train once that's within 16 minutes.
+  - **Dashed amber**: trackwork on the line right now.
+  - **Red**: major disruption (high-priority alert, or suspended or not running services).
+- **Bottom left**: minutes until the following train.
+- **Bottom right**: `+N` when the next train is N minutes late (amber, red from 5). Otherwise a 2x2 dot: **green** = live tracking says it's on time, **dim grey** = timetable only, no live position yet.
+- **Greyed out with a red corner dot**: departures couldn't be refreshed, so these are the last known numbers. After 5 minutes it switches to `NO DATA`.
+
+With `WALK_MINUTES` set, trains you can't reach in time are hidden and the divider counts down to when you need to leave rather than to departure.
+
+### 32x32 board
+
 ![train board](../images/trainboard.png)
 
-The board shows the line and current time, minutes until the next train (large), the two after it, and whether it's running late. If `WALK_MINUTES` is set, trains you can't reach in time are hidden, and the big number turns amber, then red, when it's time to leave.
+The line and current time, minutes until the next train (large), the two after it, and whether it's running late.
 
 It holds a Bluetooth connection open, which is how it notices a power cut straight away. The display only takes one connection at a time, so **stop the service before using the phone app** (`docker compose stop`).
 
@@ -51,6 +67,8 @@ The steps below are for a Pi, but any Debian-based machine with Docker (includin
    ```
 
    `departures` should list the trains from your platform. If it's empty, run it with `PLATFORM=` in `.env` to see what the platforms are called.
+
+   `docker compose run --rm idotmatrix alerts` lists today's alerts for your stop and line, how each was classified (`trackwork`, `major` or `info`, which is ignored), and whether it's in effect now.
 
 5. Start it:
 

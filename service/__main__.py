@@ -5,6 +5,7 @@ automatic recovery when the display loses power.
     python -m service scan         list nearby displays
     python -m service stops NAME   look up TfNSW stop IDs
     python -m service departures   print departures for the configured stop
+    python -m service alerts       print service alerts for the configured stop and line
     python -m service preview OUT  render the train board to a PNG
     python -m service test         flash test colours to find which write type the display accepts
 """
@@ -22,19 +23,24 @@ from idotmatrix import ConnectionManager
 from .config import Config, brightness_at, in_window
 from .display import Display
 from .render import render_board, render_compact, test_pattern, to_png
-from .trains import Departure, fetch_departures, find_stops
+from .trains import Departure, alert_level, fetch_alerts, fetch_departures, find_stops
 
 TICK_SECONDS = 10
 TIME_RESYNC = timedelta(hours=6)
-# show "NO DATA" rather than counting down from departures this old
-STALE_AFTER = timedelta(minutes=5)
+# grey the board out once departures are this much older than they should be...
+STALE_GRACE = timedelta(seconds=30)
+# ...and show "NO DATA" rather than counting down from departures this old
+NO_DATA_AFTER = timedelta(minutes=5)
+ALERT_REFRESH = timedelta(minutes=5)
 
 logger = logging.getLogger("service")
 
 
-def render_frame(cfg: Config, now: datetime, departures: Optional[List[Departure]]):
+def render_frame(
+    cfg: Config, now: datetime, departures: Optional[List[Departure]], stale: bool = False, alert: Optional[str] = None
+):
     if cfg.panel_size == 16:
-        return render_compact(now, departures, cfg.line_color, cfg.walk_minutes, cfg.clock_24h)
+        return render_compact(now, departures, cfg.line_color, cfg.walk_minutes, cfg.clock_24h, stale, alert)
     return render_board(now, departures, cfg.line, cfg.line_color, cfg.walk_minutes, cfg.clock_24h)
 
 
@@ -59,6 +65,8 @@ class Service:
         self.departures: List[Departure] = []
         self.fetched_at: Optional[datetime] = None
         self.fetch_attempted_at = datetime.min.replace(tzinfo=timezone.utc)
+        self.alert: Optional[str] = None
+        self.alerts_attempted_at = datetime.min.replace(tzinfo=timezone.utc)
 
     async def run(self) -> None:
         backoff = 5
@@ -128,8 +136,11 @@ class Service:
             return
 
         await self.refresh_departures()
-        fresh = self.fetched_at and datetime.now(timezone.utc) - self.fetched_at < STALE_AFTER
-        png = to_png(render_frame(self.cfg, now, self.departures if fresh else None), self.cfg.panel_size)
+        await self.refresh_alerts()
+        age = datetime.now(timezone.utc) - self.fetched_at if self.fetched_at else NO_DATA_AFTER
+        departures = self.departures if age < NO_DATA_AFTER else None
+        stale = age > timedelta(seconds=self.cfg.train_refresh) + STALE_GRACE
+        png = to_png(render_frame(self.cfg, now, departures, stale, self.alert), self.cfg.panel_size)
         if self.shown != "trains":
             logger.info("showing train board")
             await self.display.enter_image_mode()
@@ -138,6 +149,24 @@ class Service:
         if png != self.last_png:
             await self.display.show_png(png)
             self.last_png = png
+
+    async def refresh_alerts(self) -> None:
+        now = datetime.now(timezone.utc)
+        if now - self.alerts_attempted_at < ALERT_REFRESH:
+            return
+        self.alerts_attempted_at = now
+        try:
+            alerts = await asyncio.to_thread(
+                fetch_alerts, self.cfg.tfnsw_api_key, self.cfg.stop_id, self.cfg.line, self.cfg.timezone
+            )
+        except Exception as error:
+            # keep showing the last known state; alerts change slowly
+            logger.warning(f"could not fetch alerts: {error}")
+            return
+        level = alert_level(alerts)
+        if level != self.alert:
+            logger.info(f"line alert: {level or 'none'}")
+        self.alert = level
 
     async def refresh_departures(self) -> None:
         now = datetime.now(timezone.utc)
@@ -233,6 +262,12 @@ def main(argv: List[str]) -> None:
             late = f" (+{d.delay_minutes} late)" if d.delay_minutes else ""
             realtime = "" if d.estimated else " [timetable]"
             print(f"{d.due.astimezone(tz):%H:%M}  {d.route:<4} {d.platform:<12} {d.destination}{late}{realtime}")
+    elif command == "alerts":
+        _require_key(cfg)
+        alerts = fetch_alerts(cfg.tfnsw_api_key, cfg.stop_id, cfg.line, cfg.timezone)
+        for a in alerts:
+            print(f"{'NOW  ' if a.active else 'later'}  {a.kind:<9} {a.priority:<8} {','.join(a.lines):<10} {a.title}")
+        print(f"\n{len(alerts)} alert(s) for {cfg.line or 'all lines'}; board shows: {alert_level(alerts) or 'normal'}")
     elif command == "preview":
         out = argv[1] if len(argv) > 1 else "preview.png"
         now = datetime.now(ZoneInfo(cfg.timezone))

@@ -1,8 +1,9 @@
 """Departures from the Transport for NSW Trip Planner API (the data TripView uses)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
+import re
 from typing import List, Optional
 from zoneinfo import ZoneInfo
 
@@ -98,3 +99,81 @@ def find_stops(api_key: str, query: str) -> List[dict]:
 def minutes_until(when: datetime, now: Optional[datetime] = None) -> int:
     now = now or datetime.now(timezone.utc)
     return int((when - now).total_seconds() // 60)
+
+
+TRACKWORK = re.compile(r"track ?work|buses replace|replace trains|planned work", re.IGNORECASE)
+MAJOR = re.compile(r"major delay|significant delay|severe|suspended|not running|no trains", re.IGNORECASE)
+
+
+@dataclass
+class Alert:
+    title: str
+    priority: str
+    kind: str  # "major", "trackwork" or "info"
+    active: bool
+    lines: List[str] = field(default_factory=list)
+
+
+def _affects_line(info: dict, line: str) -> bool:
+    for affected in info.get("affected", {}).get("lines", []):
+        for name in (affected.get("disassembledName"), affected.get("number"), affected.get("name")):
+            if name and (name == line or name.startswith(line + " ")):
+                return True
+    return False
+
+
+def _active(info: dict, now: datetime) -> bool:
+    """Alerts are often published ahead of time, with validity windows for when they apply."""
+    windows = info.get("timestamps", {}).get("validity", [])
+    if not windows:
+        return True
+    for window in windows:
+        start, end = _parse_utc(window.get("from")), _parse_utc(window.get("to"))
+        if (start is None or start <= now) and (end is None or now < end):
+            return True
+    return False
+
+
+def fetch_alerts(api_key: str, stop_id: str, line: str, tz: str) -> List[Alert]:
+    """Today's service alerts at a stop that affect the given line."""
+    now = datetime.now(ZoneInfo(tz))
+    data = _get(
+        api_key,
+        "add_info",
+        {
+            "filterDateValid": now.strftime("%d-%m-%Y"),
+            "filterPublicationStatus": "current",
+            "itdLPxx_selStop": stop_id,
+        },
+    )
+    alerts: List[Alert] = []
+    for info in data.get("infos", {}).get("current", []):
+        if line and not _affects_line(info, line):
+            continue
+        text = " ".join(str(info.get(key, "")) for key in ("subtitle", "urlText", "content"))
+        priority = info.get("priority", "")
+        if TRACKWORK.search(text):
+            kind = "trackwork"
+        elif priority in ("high", "veryHigh") or MAJOR.search(text):
+            kind = "major"
+        else:
+            kind = "info"
+        alerts.append(
+            Alert(
+                title=info.get("subtitle") or info.get("urlText") or "",
+                priority=priority,
+                kind=kind,
+                active=_active(info, now),
+                lines=[l.get("disassembledName") or l.get("number") or "" for l in info.get("affected", {}).get("lines", [])],
+            )
+        )
+    return alerts
+
+
+def alert_level(alerts: List[Alert]) -> Optional[str]:
+    """The most serious kind of alert in effect right now, if any."""
+    kinds = {a.kind for a in alerts if a.active}
+    for kind in ("major", "trackwork"):
+        if kind in kinds:
+            return kind
+    return None

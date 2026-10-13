@@ -1,4 +1,4 @@
-"""Draws 32x32 train board frames with a hand-made 3x5 pixel font."""
+"""Draws train board frames (16x16 or 32x32) with hand-made pixel fonts."""
 
 from datetime import datetime
 import io
@@ -17,6 +17,8 @@ GREEN: Color = (0, 200, 60)
 AMBER: Color = (255, 150, 0)
 RED: Color = (255, 0, 0)
 BLACK: Color = (0, 0, 0)
+LIGHT_GREY: Color = (150, 150, 150)
+DARK_GREY: Color = (70, 70, 70)
 
 # 3x5 glyphs, one string per row, "#" = lit pixel.
 FONT = {
@@ -61,6 +63,40 @@ FONT = {
     "Y": ["#.#", "#.#", ".#.", ".#.", ".#."],
     "Z": ["###", "..#", ".#.", "#..", "###"],
 }
+
+
+# 5x7 digits for the big number on the 16x16 board.
+BIG_DIGITS = {
+    "0": [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+    "1": ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."],
+    "2": [".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"],
+    "3": [".###.", "#...#", "....#", "..##.", "....#", "#...#", ".###."],
+    "4": ["...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."],
+    "5": ["#####", "#....", "####.", "....#", "....#", "#...#", ".###."],
+    "6": ["..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."],
+    "7": ["#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."],
+    "8": [".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."],
+    "9": [".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."],
+}
+BIG_GAP = 2
+
+
+def draw_big_number(img: Image.Image, y: int, number: int, color: Color) -> None:
+    """Draws a number of up to two digits in the 5x7 font, centred."""
+    digits = str(number)
+    width = len(digits) * 5 + (len(digits) - 1) * BIG_GAP
+    x = (img.width - width) // 2
+    for digit in digits:
+        for row, line in enumerate(BIG_DIGITS[digit]):
+            for col, cell in enumerate(line):
+                if cell == "#":
+                    img.putpixel((x + col, y + row), color)
+        x += 5 + BIG_GAP
+
+
+def dim(color: Color, factor: float = 0.25) -> Color:
+    r, g, b = color
+    return int(r * factor), int(g * factor), int(b * factor)
 
 
 def text_width(text: str, scale: int = 1) -> int:
@@ -179,42 +215,86 @@ def render_board(
     return img
 
 
+def _bar_colors(line_color: Color, alert: Optional[str], stale: bool, x: int) -> Tuple[Color, Color]:
+    """(lit, unlit) colours for column x of the divider."""
+    if stale:
+        return (90, 90, 90), (40, 40, 40)
+    if alert == "major":
+        return RED, dim(RED)
+    if alert == "trackwork":
+        # dashed like a work zone: two on, two off
+        if x % 4 < 2:
+            return AMBER, dim(AMBER)
+        return (60, 60, 60), (60, 60, 60)
+    return line_color, dim(line_color)
+
+
 def render_compact(
     now: datetime,
     departures: Optional[List[Departure]],
     line_color: Color,
     walk_minutes: int = 0,
     hour24: bool = False,
+    stale: bool = False,
+    alert: Optional[str] = None,
 ) -> Image.Image:
-    """16x16 layout: the next train's minutes large, a rule in the line colour, then the
-    train after it on the left and the next train's delay on the right. Trains an hour or
-    more away show their departure time instead."""
+    """16x16 layout:
+
+    - big number: minutes to the next train you can catch (amber in the last 3 minutes before
+      you need to leave). An hour or more away, its departure time instead.
+    - divider: one lit pixel per minute until you need to leave, so it shrinks as the train
+      gets closer. A grey pixel marks the following train once that's within 16 minutes.
+      Dashed amber for trackwork on the line, red for a major disruption.
+    - bottom left: minutes to the following train.
+    - bottom right: "+N" if the next train is late, otherwise a 2x2 pip: green when live
+      tracking says it's on time, dim grey when it's only the timetable.
+    - stale data (fetches failing): everything greyed out with a red corner pixel.
+    """
     img = Image.new("RGB", (16, 16), BLACK)
     if departures is None:
         draw_centered(img, 2, "NO", RED)
         draw_centered(img, 9, "DATA", RED)
         return img
 
-    for x in range(img.width):
-        img.putpixel((x, 10), line_color)
-
     upcoming = _catchable(departures, now, walk_minutes)
+    leave_in = [m - walk_minutes for m, _ in upcoming]
+
+    # divider
+    lit = min(max(leave_in[0], 0), img.width) if upcoming else 0
+    marker = leave_in[1] - 1 if len(upcoming) > 1 and leave_in[1] <= img.width else None
+    for x in range(img.width):
+        lit_color, unlit_color = _bar_colors(line_color, alert, stale, x)
+        img.putpixel((x, 9), lit_color if x < lit else unlit_color)
+    if marker is not None and marker >= lit:
+        img.putpixel((marker, 9), DARK_GREY if stale else LIGHT_GREY)
+
+    if stale:
+        img.putpixel((img.width - 1, 0), RED)
+
     if not upcoming:
-        draw_centered(img, 0, "--", GREY, scale=2)
+        draw_centered(img, 2, "--", GREY)
         return img
 
     minutes, departure = upcoming[0]
     if minutes >= FAR_MINUTES:
-        draw_centered(img, 3, _departs_at(departure, now, hour24, img.width), WHITE)
+        draw_centered(img, 2, _departs_at(departure, now, hour24, img.width), GREY if stale else WHITE)
     else:
-        draw_centered(img, 0, str(max(0, minutes)), _urgency(minutes, walk_minutes), scale=2)
+        color = GREY if stale else AMBER if leave_in[0] <= 3 else WHITE
+        draw_big_number(img, 1, max(0, minutes), color)
 
     if len(upcoming) > 1 and upcoming[1][0] < FAR_MINUTES:
-        draw_text(img, 0, 11, str(upcoming[1][0]), GREY)
+        draw_text(img, 0, 11, str(upcoming[1][0]), DARK_GREY if stale else GREY)
+
+    if stale:
+        return img
     delay = departure.delay_minutes
     if delay >= 1:
         late = f"+{min(delay, 9)}"
         draw_text(img, img.width - text_width(late), 11, late, AMBER if delay < 5 else RED)
+    else:
+        pip = GREEN if departure.estimated is not None else DARK_GREY
+        for x, y in ((14, 14), (15, 14), (14, 15), (15, 15)):
+            img.putpixel((x, y), pip)
     return img
 
 
