@@ -68,6 +68,7 @@ class Service:
         self.fetched_at: Optional[datetime] = None
         self.fetch_attempted_at = datetime.min.replace(tzinfo=timezone.utc)
         self.alert: Optional[str] = None
+        self.alerts_seen: Set[str] = set()
         self.alerts_attempted_at = datetime.min.replace(tzinfo=timezone.utc)
 
     async def run(self) -> None:
@@ -165,6 +166,10 @@ class Service:
             # keep showing the last known state; alerts change slowly
             logger.warning(f"could not fetch alerts: {error}")
             return
+        for a in alerts:
+            if a.active and a.title not in self.alerts_seen:
+                logger.info(f"alert ({a.kind}, {a.priority or 'no priority'}): {a.title}")
+        self.alerts_seen = {a.title for a in alerts if a.active}
         level = alert_level(alerts)
         if level != self.alert:
             logger.info(f"line alert: {level or 'none'}")

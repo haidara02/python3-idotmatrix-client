@@ -11,7 +11,7 @@ An always-on service for one display:
 ![16x16 train board states](../images/trainboard16.png)
 
 - **Big number**: minutes until the next train you can catch. Turns amber in the last 3 minutes before you need to leave. An hour or more away, it shows the departure time instead.
-- **Divider**: one lit dot per minute until you need to leave, so it shrinks as the train gets closer. A grey dot marks the following train once that's within 16 minutes, and red dots mark cancelled trains where they would have been. Cancelled trains are left out of the countdown.
+- **Divider**: one lit dot per minute until you need to leave, so it shrinks as the train gets closer. A grey dot marks the following train once that's within 16 minutes, and red dots mark cancelled trains where they would have been (gaps in the line when it's red). Cancelled trains are left out of the countdown.
   - **Dashed amber**: trackwork on the line right now.
   - **Red**: major disruption (high-priority alert, or suspended, cancelled or not running services).
 - **Bottom left**: minutes until the following train.

@@ -244,7 +244,7 @@ def render_compact(
       you need to leave). An hour or more away, its departure time instead.
     - divider: one lit pixel per minute until you need to leave, so it shrinks as the train
       gets closer. A grey pixel marks the following train once that's within 16 minutes, and
-      red pixels mark cancelled trains where they would have been.
+      red pixels mark cancelled trains where they would have been (holes when the line is red).
       Dashed amber for trackwork on the line, red for a major disruption.
     - bottom left: minutes to the following train.
     - bottom right: "+N" if the next train is late, otherwise a 2x2 pip: green when live
@@ -269,10 +269,12 @@ def render_compact(
     if marker is not None and marker >= lit:
         img.putpixel((marker, 9), DARK_GREY if stale else LIGHT_GREY)
     if not stale:
+        # a cancellation is a missing piece of service: red on a running line, a hole in a red one
+        gap = BLACK if alert == "major" else RED
         for departure in departures:
             gone = minutes_until(departure.planned, now) - walk_minutes
             if departure.cancelled and 1 <= gone <= img.width:
-                img.putpixel((gone - 1, 9), RED)
+                img.putpixel((gone - 1, 9), gap)
 
     if stale:
         img.putpixel((img.width - 1, 0), RED)
