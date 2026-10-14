@@ -22,6 +22,7 @@ class Departure:
     route: str
     destination: str
     platform: str
+    cancelled: bool = False
 
     @property
     def due(self) -> datetime:
@@ -51,8 +52,13 @@ def _get(api_key: str, endpoint: str, params: dict) -> dict:
     return response.json()
 
 
-def fetch_departures(api_key: str, stop_id: str, platform: str, tz: str) -> List[Departure]:
-    """Returns upcoming departures from a stop, filtered to one platform if given."""
+def _is_cancelled(event: dict) -> bool:
+    """Cancelled trips stay in the feed, with no estimate, so they look like timetabled trains."""
+    statuses = event.get("realtimeStatus") or []
+    return bool(event.get("isCancelled")) or any("CANCEL" in str(status).upper() for status in statuses)
+
+
+def fetch_stop_events(api_key: str, stop_id: str, tz: str) -> List[dict]:
     now = datetime.now(ZoneInfo(tz))
     data = _get(
         api_key,
@@ -67,8 +73,13 @@ def fetch_departures(api_key: str, stop_id: str, platform: str, tz: str) -> List
             "TfNSWDM": "true",
         },
     )
+    return data.get("stopEvents", [])
+
+
+def fetch_departures(api_key: str, stop_id: str, platform: str, tz: str) -> List[Departure]:
+    """Returns upcoming departures from a stop, filtered to one platform if given, including cancelled ones."""
     departures: List[Departure] = []
-    for event in data.get("stopEvents", []):
+    for event in fetch_stop_events(api_key, stop_id, tz):
         location = event.get("location", {})
         stop_platform = location.get("disassembledName") or location.get("name", "")
         if platform and platform.lower() not in stop_platform.lower():
@@ -84,6 +95,7 @@ def fetch_departures(api_key: str, stop_id: str, platform: str, tz: str) -> List
                 route=transportation.get("disassembledName", ""),
                 destination=transportation.get("destination", {}).get("name", ""),
                 platform=stop_platform,
+                cancelled=_is_cancelled(event),
             )
         )
     departures.sort(key=lambda d: d.due)

@@ -4,18 +4,19 @@ automatic recovery when the display loses power.
     python -m service              run the service
     python -m service scan         list nearby displays
     python -m service stops NAME   look up TfNSW stop IDs
-    python -m service departures   print departures for the configured stop
+    python -m service departures   print departures for the configured stop (--raw for the API fields)
     python -m service alerts       print service alerts for the configured stop and line
     python -m service preview OUT  render the train board to a PNG
     python -m service test         flash test colours to find which write type the display accepts
 """
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 import logging
 import signal
 import sys
-from typing import List, Optional
+from typing import List, Optional, Set
 from zoneinfo import ZoneInfo
 
 from idotmatrix import ConnectionManager
@@ -23,7 +24,7 @@ from idotmatrix import ConnectionManager
 from .config import Config, brightness_at, in_window
 from .display import Display
 from .render import render_board, render_compact, test_pattern, to_png
-from .trains import Departure, alert_level, fetch_alerts, fetch_departures, find_stops
+from .trains import Departure, alert_level, fetch_alerts, fetch_departures, fetch_stop_events, find_stops
 
 TICK_SECONDS = 10
 TIME_RESYNC = timedelta(hours=6)
@@ -63,6 +64,7 @@ class Service:
         self.brightness: Optional[int] = None
         self.last_time_sync = datetime.min.replace(tzinfo=timezone.utc)
         self.departures: List[Departure] = []
+        self.cancelled: Set[str] = set()
         self.fetched_at: Optional[datetime] = None
         self.fetch_attempted_at = datetime.min.replace(tzinfo=timezone.utc)
         self.alert: Optional[str] = None
@@ -174,9 +176,14 @@ class Service:
             return
         self.fetch_attempted_at = now
         try:
-            self.departures = await asyncio.to_thread(
+            departures = await asyncio.to_thread(
                 fetch_departures, self.cfg.tfnsw_api_key, self.cfg.stop_id, self.cfg.platform, self.cfg.timezone
             )
+            cancelled = {f"{d.planned.astimezone(ZoneInfo(self.cfg.timezone)):%H:%M}" for d in departures if d.cancelled}
+            if cancelled != self.cancelled:
+                logger.info(f"cancelled: {', '.join(sorted(cancelled)) or 'none'}")
+            self.cancelled = cancelled
+            self.departures = [d for d in departures if not d.cancelled]
             self.fetched_at = now
             logger.debug(f"fetched {len(self.departures)} departures")
         except Exception as error:
@@ -260,7 +267,16 @@ def main(argv: List[str]) -> None:
     elif command == "departures":
         _require_key(cfg)
         tz = ZoneInfo(cfg.timezone)
+        if "--raw" in argv:
+            # the realtime fields behind "live", "timetable" and "cancelled", straight from the API
+            for event in fetch_stop_events(cfg.tfnsw_api_key, cfg.stop_id, cfg.timezone):
+                fields = {k: v for k, v in event.items() if k not in ("location", "transportation", "infos")}
+                print(event.get("location", {}).get("disassembledName", ""), json.dumps(fields))
+            return
         for d in fetch_departures(cfg.tfnsw_api_key, cfg.stop_id, cfg.platform, cfg.timezone):
+            if d.cancelled:
+                print(f"{d.planned.astimezone(tz):%H:%M}  {d.route:<4} {d.platform:<12} {d.destination} CANCELLED")
+                continue
             late = f" (+{d.delay_minutes} late)" if d.delay_minutes else ""
             realtime = "" if d.estimated else " [timetable]"
             print(f"{d.due.astimezone(tz):%H:%M}  {d.route:<4} {d.platform:<12} {d.destination}{late}{realtime}")
@@ -275,6 +291,7 @@ def main(argv: List[str]) -> None:
         now = datetime.now(ZoneInfo(cfg.timezone))
         if cfg.tfnsw_api_key:
             departures = fetch_departures(cfg.tfnsw_api_key, cfg.stop_id, cfg.platform, cfg.timezone)
+            departures = [d for d in departures if not d.cancelled]
         else:
             departures = [
                 Departure(now + timedelta(minutes=m, seconds=30), now + timedelta(minutes=m + late, seconds=30), "T8", "Central", "Platform 1")
