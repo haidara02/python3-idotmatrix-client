@@ -138,8 +138,8 @@ def _status(departure: Departure) -> Tuple[str, Color]:
 
 
 def _catchable(departures: List[Departure], now: datetime, walk_minutes: int) -> List[Tuple[int, Departure]]:
-    """(minutes away, departure) for trains you can still reach on foot."""
-    return [(m, d) for d in departures if (m := minutes_until(d.due, now)) >= walk_minutes]
+    """(minutes away, departure) for running trains you can still reach on foot."""
+    return [(m, d) for d in departures if not d.cancelled and (m := minutes_until(d.due, now)) >= walk_minutes]
 
 
 # trains further away than this show their departure time rather than minutes
@@ -243,7 +243,8 @@ def render_compact(
     - big number: minutes to the next train you can catch (amber in the last 3 minutes before
       you need to leave). An hour or more away, its departure time instead.
     - divider: one lit pixel per minute until you need to leave, so it shrinks as the train
-      gets closer. A grey pixel marks the following train once that's within 16 minutes.
+      gets closer. A grey pixel marks the following train once that's within 16 minutes, and
+      red pixels mark cancelled trains where they would have been.
       Dashed amber for trackwork on the line, red for a major disruption.
     - bottom left: minutes to the following train.
     - bottom right: "+N" if the next train is late, otherwise a 2x2 pip: green when live
@@ -267,6 +268,11 @@ def render_compact(
         img.putpixel((x, 9), lit_color if x < lit else unlit_color)
     if marker is not None and marker >= lit:
         img.putpixel((marker, 9), DARK_GREY if stale else LIGHT_GREY)
+    if not stale:
+        for departure in departures:
+            gone = minutes_until(departure.planned, now) - walk_minutes
+            if departure.cancelled and 1 <= gone <= img.width:
+                img.putpixel((gone - 1, 9), RED)
 
     if stale:
         img.putpixel((img.width - 1, 0), RED)

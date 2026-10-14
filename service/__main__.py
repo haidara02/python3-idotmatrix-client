@@ -183,7 +183,7 @@ class Service:
             if cancelled != self.cancelled:
                 logger.info(f"cancelled: {', '.join(sorted(cancelled)) or 'none'}")
             self.cancelled = cancelled
-            self.departures = [d for d in departures if not d.cancelled]
+            self.departures = departures
             self.fetched_at = now
             logger.debug(f"fetched {len(self.departures)} departures")
         except Exception as error:
@@ -291,7 +291,6 @@ def main(argv: List[str]) -> None:
         now = datetime.now(ZoneInfo(cfg.timezone))
         if cfg.tfnsw_api_key:
             departures = fetch_departures(cfg.tfnsw_api_key, cfg.stop_id, cfg.platform, cfg.timezone)
-            departures = [d for d in departures if not d.cancelled]
         else:
             departures = [
                 Departure(now + timedelta(minutes=m, seconds=30), now + timedelta(minutes=m + late, seconds=30), "T8", "Central", "Platform 1")

@@ -114,7 +114,7 @@ def minutes_until(when: datetime, now: Optional[datetime] = None) -> int:
 
 
 TRACKWORK = re.compile(r"track ?work|buses replace|replace trains|planned work", re.IGNORECASE)
-MAJOR = re.compile(r"major delay|significant delay|severe|suspended|not running|no trains", re.IGNORECASE)
+MAJOR = re.compile(r"major delay|significant delay|severe|suspended|not running|no trains|cancel", re.IGNORECASE)
 
 
 @dataclass
